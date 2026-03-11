@@ -31,7 +31,7 @@ export default function AboutPage() {
                 <strong className="text-slate-900 dark:text-white">
                   Experience:
                 </strong>{" "}
-                3-5 years
+                12+ years
               </span>
             </div>
           </div>

@@ -16,11 +16,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Portfolio | Frontend Engineer",
+    default: "Portfolio | Senior Software Engineer",
     template: "%s | Portfolio",
   },
   description:
-    "Cross-platform developer specializing in React, React Native, and Android. Building enterprise-grade, real-time data-driven applications.",
+    "Senior software engineer with 12+ years of experience. Android native developer turned React/React Native cross-platform specialist.",
 };
 
 export default function RootLayout({
