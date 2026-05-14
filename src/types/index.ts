@@ -31,3 +31,13 @@ export interface NavItem {
   label: string;
   href: string;
 }
+
+export interface BlogPost {
+  slug: string;
+  title: string;
+  subtitle: string;
+  excerpt: string;
+  date: string; // ISO format: YYYY-MM-DD
+  tags: string[];
+  readingTime: string; // e.g. "8 min read"
+}
