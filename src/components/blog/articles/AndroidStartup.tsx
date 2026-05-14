@@ -14,65 +14,75 @@ export default function AndroidStartup() {
   return (
     <>
       <P>
-        Here is a question that almost every Android developer takes for
-        granted: <strong>who initializes WorkManager?</strong> You never call{" "}
-        <InlineCode>WorkManager.initialize()</InlineCode> yourself, yet by the
-        time your <InlineCode>Application.onCreate()</InlineCode> finishes,
-        WorkManager is ready, EmojiCompat has loaded its font, and
-        ProcessLifecycleOwner is already observing your app&apos;s lifecycle.
-        How?
-      </P>
-      <P>
-        The answer is a small but elegant Jetpack library called{" "}
-        <InlineCode>androidx.startup</InlineCode>. It solves a real problem —
-        one that used to make cold starts painfully slow — and the way it works
-        is a beautiful combination of Android&apos;s manifest merger, the
-        ContentProvider lifecycle, and a tiny bit of reflection. Let&apos;s
-        trace it end to end.
+        Most Android developers know the four classic components —{" "}
+        <InlineCode>Activity</InlineCode>, <InlineCode>Service</InlineCode>,{" "}
+        <InlineCode>BroadcastReceiver</InlineCode>, and{" "}
+        <InlineCode>ContentProvider</InlineCode>. They tend to think of{" "}
+        <InlineCode>ContentProvider</InlineCode> as &quot;the one for sharing
+        data between apps&quot; and move on. But it has a second, quieter
+        property that has shaped the Android library ecosystem for years:
       </P>
 
-      <H2>The problem: every library wanted to wake up first</H2>
+      <Callout type="tip">
+        <strong>
+          ContentProviders are instantiated before{" "}
+          <InlineCode>Application.onCreate()</InlineCode>.
+        </strong>{" "}
+        Specifically, every <InlineCode>ContentProvider</InlineCode> declared
+        in your manifest has its <InlineCode>onCreate()</InlineCode> called
+        during <InlineCode>ActivityThread</InlineCode>&apos;s app bind step,
+        before your <InlineCode>Application</InlineCode>&apos;s
+        <InlineCode>onCreate()</InlineCode> runs.
+      </Callout>
 
       <P>
-        Before <InlineCode>androidx.startup</InlineCode> existed (released in
-        2020), library authors who needed to run code before your app&apos;s
-        UI was visible had one common trick: declare a{" "}
-        <InlineCode>ContentProvider</InlineCode> in the library&apos;s
-        manifest. Android instantiates all declared{" "}
-        <InlineCode>ContentProvider</InlineCode>s before your{" "}
-        <InlineCode>Application.onCreate()</InlineCode> runs, so the library
-        could piggyback on that to initialize itself.
+        This makes <InlineCode>ContentProvider</InlineCode> the earliest
+        process-level hook accessible to library code. If you want to run
+        code &quot;as soon as the app process exists,&quot; before any
+        Activity has been created, without forcing every consumer of your
+        library to add a line to their <InlineCode>Application</InlineCode>{" "}
+        class — a stub <InlineCode>ContentProvider</InlineCode> is the trick.
+      </P>
+
+      <H2>Libraries discovered this trick — and abused it</H2>
+
+      <P>
+        Once one library showed the way, everyone followed. Firebase, the
+        Facebook SDK, Crashlytics, AndroidX components — each declared its
+        own zero-content <InlineCode>ContentProvider</InlineCode> in its
+        manifest, purely as a hook to call{" "}
+        <InlineCode>SDK.initialize()</InlineCode> before the rest of the app
+        woke up. From the manifest&apos;s point of view, your app suddenly
+        had eight or ten providers it never asked for. From the user&apos;s
+        point of view, cold starts got slower with every dependency added.
       </P>
 
       <P>
-        It worked. It also turned cold starts into a parade of unrelated
-        ContentProviders. Firebase, Facebook SDK, Crashlytics, AndroidX
-        components — each one a separate provider, each one allocated and
-        initialized sequentially, every single time your app started. The
-        cost was invisible to library authors but painfully visible to users.
+        Each of those provider instantiations is not free. Android has to
+        load the class, allocate the instance, plumb it into the Binder
+        system, and call <InlineCode>onCreate()</InlineCode> — sequentially,
+        before your app can show its first frame.
       </P>
 
       <Callout type="note">
-        Google&apos;s own blog post introducing the Startup library cited{" "}
-        <strong>hundreds of milliseconds</strong> of cold start time spent on
-        bookkeeping for these stub providers in real Play Store apps.
+        Google&apos;s post introducing the Jetpack Startup library cited
+        real Play Store apps where{" "}
+        <strong>hundreds of milliseconds of cold start time</strong> were
+        being spent on bookkeeping for these stub providers. None of that
+        time was doing anything useful for the user.
       </Callout>
 
-      <H2>The fix: one shared ContentProvider</H2>
+      <H2>The fix: share one ContentProvider</H2>
 
       <P>
-        The Startup library&apos;s insight is simple: if everyone needs to
-        run code at the same lifecycle point, they can share a single{" "}
-        <InlineCode>ContentProvider</InlineCode>. Libraries register their
-        initialization logic as <em>metadata</em> on a single provider — and
-        that provider, called{" "}
-        <InlineCode>InitializationProvider</InlineCode>, is contributed by
-        the Startup library itself.
-      </P>
-
-      <P>
-        The contract for libraries is the{" "}
-        <InlineCode>Initializer&lt;T&gt;</InlineCode> interface:
+        The insight behind <InlineCode>androidx.startup</InlineCode>{" "}
+        (released in 2020) is structural, not technical: if every library
+        needs the same lifecycle hook, they can share a single{" "}
+        <InlineCode>ContentProvider</InlineCode>. The Startup library
+        contributes that single provider — called{" "}
+        <InlineCode>InitializationProvider</InlineCode> — and defines a tiny
+        contract that libraries implement instead of writing their own
+        provider:
       </P>
 
       <CodeBlock language="kotlin">{`interface Initializer<T> {
@@ -81,17 +91,20 @@ export default function AndroidStartup() {
 }`}</CodeBlock>
 
       <P>
-        A library implements this interface, declares the class as metadata
-        in its manifest, and the Startup library picks it up at app launch.
-        Two functions are all you need.
+        A library writes one class that implements this interface, then
+        declares the class as <InlineCode>&lt;meta-data&gt;</InlineCode> on
+        the shared provider. No more stub providers. One process-level hook,
+        many initializers running through it.
       </P>
 
       <H2>How a library registers itself</H2>
 
       <P>
-        Let&apos;s look at how WorkManager actually does this. Inside the{" "}
+        Let&apos;s walk through how WorkManager — a Jetpack library that
+        absolutely needs to initialize at app startup — wires itself into
+        this system. Inside the{" "}
         <InlineCode>androidx.work:work-runtime</InlineCode> artifact, the
-        manifest contains:
+        library&apos;s own manifest looks like this:
       </P>
 
       <CodeBlock language="xml">{`<application>
@@ -110,31 +123,30 @@ export default function AndroidStartup() {
 
       <UL>
         <LI>
-          The library declares the <em>same</em>{" "}
-          <InlineCode>InitializationProvider</InlineCode> that the Startup
-          library declares. Manifest Merger will combine them into a single
-          provider in the final APK.
+          The library re-declares the <em>same</em>{" "}
+          <InlineCode>InitializationProvider</InlineCode> the Startup library
+          declared. Manifest Merger will combine these into a single provider
+          in the final APK.
         </LI>
         <LI>
-          Inside that provider, a <InlineCode>&lt;meta-data&gt;</InlineCode>{" "}
-          entry names a class — here,{" "}
-          <InlineCode>WorkManagerInitializer</InlineCode> — and tags it with
-          the magic value <InlineCode>androidx.startup</InlineCode>.
+          A <InlineCode>&lt;meta-data&gt;</InlineCode> entry names a class —
+          here, <InlineCode>WorkManagerInitializer</InlineCode> — tagged
+          with the magic value <InlineCode>androidx.startup</InlineCode>.
         </LI>
         <LI>
           <InlineCode>tools:node=&quot;merge&quot;</InlineCode> tells the
-          Manifest Merger to combine this declaration with any other
-          declarations of the same provider, rather than replacing them.
+          merger to combine this declaration with other declarations of the
+          same provider rather than overwriting them.
         </LI>
       </UL>
 
-      <H2>Manifest Merger does the rest at build time</H2>
+      <H2>Manifest Merger does the assembly at build time</H2>
 
       <P>
-        When AGP builds your app, it merges manifests from every dependency.
-        Each library that wants Startup-based initialization contributes its
-        own <InlineCode>&lt;meta-data&gt;</InlineCode> entry. After merging,
-        your final manifest looks something like this:
+        When AGP builds your app, manifests from every dependency are
+        merged. Each library that opts in contributes one{" "}
+        <InlineCode>&lt;meta-data&gt;</InlineCode> entry. After merging,
+        your final manifest looks roughly like this:
       </P>
 
       <CodeBlock language="xml">{`<provider
@@ -153,9 +165,9 @@ export default function AndroidStartup() {
 </provider>`}</CodeBlock>
 
       <P>
-        Every library&apos;s &quot;business card&quot; ends up inside one
-        provider. One provider, many initializers. That is the entire
-        architectural trick.
+        Every opted-in library&apos;s &quot;business card&quot; ends up
+        inside the same provider. One provider, many initializers. That is
+        the entire architectural trick.
       </P>
 
       <Callout type="tip">
@@ -164,16 +176,16 @@ export default function AndroidStartup() {
           app/build/intermediates/merged_manifests/&hellip;/AndroidManifest.xml
         </InlineCode>{" "}
         and search for <InlineCode>InitializationProvider</InlineCode>.
-        You&apos;ll see all the libraries that have registered themselves.
+        You&apos;ll see every library that registered itself.
       </Callout>
 
-      <H2>Runtime: discovery via reflection</H2>
+      <H2>Runtime: one provider, reflective dispatch</H2>
 
       <P>
-        At runtime, Android instantiates the{" "}
-        <InlineCode>InitializationProvider</InlineCode> just like any other{" "}
-        <InlineCode>ContentProvider</InlineCode>. Its{" "}
-        <InlineCode>onCreate()</InlineCode> does essentially this:
+        At runtime, Android instantiates{" "}
+        <InlineCode>InitializationProvider</InlineCode> exactly like any
+        other <InlineCode>ContentProvider</InlineCode>. Its{" "}
+        <InlineCode>onCreate()</InlineCode> kicks off the discovery flow:
       </P>
 
       <CodeBlock language="kotlin">{`override fun onCreate(): Boolean {
@@ -184,49 +196,98 @@ export default function AndroidStartup() {
 
       <P>
         And <InlineCode>discoverAndInitialize()</InlineCode> performs the
-        following steps:
+        following:
       </P>
 
       <OL>
         <LI>
-          Use <InlineCode>PackageManager</InlineCode> to read its own
-          ComponentInfo, including the merged{" "}
+          Use <InlineCode>PackageManager</InlineCode> to read the
+          provider&apos;s own ComponentInfo, including the merged{" "}
           <InlineCode>&lt;meta-data&gt;</InlineCode> bundle.
         </LI>
         <LI>
           Filter entries whose value equals{" "}
-          <InlineCode>androidx.startup</InlineCode>. The key of each entry is
-          a fully qualified class name.
+          <InlineCode>androidx.startup</InlineCode>. Each key is a fully
+          qualified class name.
         </LI>
         <LI>
-          For each class name, call{" "}
-          <InlineCode>Class.forName(name)</InlineCode> and use reflection to
-          instantiate the <InlineCode>Initializer</InlineCode> via its no-arg
-          constructor.
+          For each name, call <InlineCode>Class.forName(name)</InlineCode>{" "}
+          and use reflection to instantiate the{" "}
+          <InlineCode>Initializer</InlineCode> via its no-arg constructor.
         </LI>
         <LI>
-          Compute the dependency graph by calling{" "}
+          Build a dependency graph by calling{" "}
           <InlineCode>dependencies()</InlineCode> on each initializer, then
-          topologically sort them.
+          topologically sort.
         </LI>
         <LI>
-          For each initializer in sorted order, call{" "}
-          <InlineCode>create(context)</InlineCode>. The return value is
-          cached so dependents can read it without re-running initialization.
+          Walk the sorted list and call{" "}
+          <InlineCode>create(context)</InlineCode> on each. Return values
+          are cached so dependents read them without re-running
+          initialization.
         </LI>
       </OL>
 
+      <H2>The WorkManager example, end to end</H2>
+
       <P>
-        That is the whole runtime mechanism: read names from metadata,
-        reflectively build a graph, walk it in order.
+        Now that the general machine is clear, here is what happens
+        specifically for WorkManager between launcher tap and first frame:
       </P>
+
+      <OL>
+        <LI>
+          Android reads the merged manifest, finds the single{" "}
+          <InlineCode>InitializationProvider</InlineCode>, and adds it to
+          the list of providers to instantiate.
+        </LI>
+        <LI>
+          Before <InlineCode>Application.onCreate()</InlineCode>, Android
+          calls the provider&apos;s <InlineCode>onCreate()</InlineCode>,
+          which triggers <InlineCode>discoverAndInitialize()</InlineCode>.
+        </LI>
+        <LI>
+          The Startup library reflectively instantiates each registered
+          initializer, including{" "}
+          <InlineCode>WorkManagerInitializer</InlineCode>.
+        </LI>
+        <LI>
+          <InlineCode>WorkManagerInitializer.create(context)</InlineCode>{" "}
+          checks whether your <InlineCode>Application</InlineCode> implements{" "}
+          <InlineCode>Configuration.Provider</InlineCode>. If yes, your
+          custom configuration is used; if not, it falls back to{" "}
+          <InlineCode>Configuration.Builder().build()</InlineCode>.
+        </LI>
+        <LI>
+          The initializer calls{" "}
+          <InlineCode>WorkManager.initialize(context, config)</InlineCode>,
+          populating the internal{" "}
+          <InlineCode>sDefaultInstance</InlineCode>.
+        </LI>
+        <LI>
+          Now <InlineCode>Application.onCreate()</InlineCode> runs. Any
+          later call to{" "}
+          <InlineCode>WorkManager.getInstance(context)</InlineCode>{" "}
+          returns the already-initialized singleton without doing any work.
+        </LI>
+      </OL>
+
+      <Callout type="note">
+        This is also why, in modern projects, you do not need the{" "}
+        <InlineCode>tools:node=&quot;remove&quot;</InlineCode> trick that
+        older tutorials show. WorkManager 2.6+ checks for{" "}
+        <InlineCode>Configuration.Provider</InlineCode> inside the
+        Startup-driven path itself. Disabling the provider was only needed
+        back when <InlineCode>WorkManagerInitializer</InlineCode> blindly
+        used the default config and ignored your custom one.
+      </Callout>
 
       <H2>Dependencies and ordering</H2>
 
       <P>
         The <InlineCode>dependencies()</InlineCode> list is what makes the
-        system composable. Suppose a custom initializer needs WorkManager to
-        be ready first. It can declare:
+        system composable. If a custom initializer needs WorkManager to be
+        ready first, it can declare:
       </P>
 
       <CodeBlock language="kotlin">{`class MyInitializer : Initializer<MyComponent> {
@@ -242,77 +303,25 @@ export default function AndroidStartup() {
 }`}</CodeBlock>
 
       <P>
-        The Startup library handles cycles (they throw), missing initializers
-        (they throw too), and ensures each initializer runs exactly once,
-        even if multiple downstream initializers list it as a dependency.
+        The Startup library handles cycles (they throw), missing
+        initializers (they throw too), and ensures each initializer runs
+        exactly once, even when multiple downstream initializers list it as
+        a dependency.
       </P>
 
-      <H2>The full picture: WorkManager at app launch</H2>
-
-      <P>
-        Putting it all together, here is what happens between the user
-        tapping your launcher icon and the first frame:
-      </P>
-
-      <OL>
-        <LI>
-          Android loads the APK and reads the merged manifest, which contains
-          a single <InlineCode>InitializationProvider</InlineCode>.
-        </LI>
-        <LI>
-          Before <InlineCode>Application.onCreate()</InlineCode> runs, Android
-          instantiates every declared <InlineCode>ContentProvider</InlineCode>{" "}
-          — including the Startup one — and calls its{" "}
-          <InlineCode>onCreate()</InlineCode>.
-        </LI>
-        <LI>
-          The Startup provider reads its{" "}
-          <InlineCode>&lt;meta-data&gt;</InlineCode>, finds{" "}
-          <InlineCode>WorkManagerInitializer</InlineCode> among others, and
-          reflectively instantiates it.
-        </LI>
-        <LI>
-          <InlineCode>WorkManagerInitializer.create(context)</InlineCode>{" "}
-          checks whether your <InlineCode>Application</InlineCode> implements{" "}
-          <InlineCode>Configuration.Provider</InlineCode>. If yes, it uses
-          your custom configuration; if not, it falls back to{" "}
-          <InlineCode>Configuration.Builder().build()</InlineCode>.
-        </LI>
-        <LI>
-          The initializer calls{" "}
-          <InlineCode>WorkManager.initialize(context, config)</InlineCode>,
-          which populates <InlineCode>sDefaultInstance</InlineCode>.
-        </LI>
-        <LI>
-          Finally, <InlineCode>Application.onCreate()</InlineCode> runs. By
-          this point, calling <InlineCode>WorkManager.getInstance(context)</InlineCode>{" "}
-          returns the already-initialized singleton.
-        </LI>
-      </OL>
-
-      <Callout type="note">
-        This is also why, in modern projects, you do not need the{" "}
-        <InlineCode>tools:node=&quot;remove&quot;</InlineCode> trick that
-        older tutorials show. WorkManager 2.6+ checks for{" "}
-        <InlineCode>Configuration.Provider</InlineCode> directly inside the
-        Startup-driven path. Disabling the provider was only needed when{" "}
-        <InlineCode>WorkManagerInitializer</InlineCode> blindly used the
-        default config and ignored your custom one.
-      </Callout>
-
-      <H2>Comparison: three eras of library initialization</H2>
+      <H2>Three eras of library initialization</H2>
 
       <Table
         headers={["Approach", "How it works", "Cost"]}
         rows={[
           [
-            "Library-owned ContentProvider",
-            "Each library declares its own provider",
+            "Library-owned ContentProvider (pre-2020)",
+            "Each library declares its own stub provider",
             "N providers instantiated at every cold start",
           ],
           [
-            "androidx.startup",
-            "Single provider, libraries register via metadata",
+            "androidx.startup (current)",
+            "Single shared provider, libraries register via metadata",
             "1 provider, reflective dispatch, dependency-aware",
           ],
           [
@@ -327,21 +336,25 @@ export default function AndroidStartup() {
 
       <UL>
         <LI>
-          <strong>Manifest merging is a real extensibility point.</strong>{" "}
+          <strong>
+            ContentProvider&apos;s early lifecycle is a real Android primitive.
+          </strong>{" "}
+          The entire Startup library exists to manage one consequence of
+          that lifecycle property. Knowing where{" "}
+          <InlineCode>ContentProvider.onCreate()</InlineCode> sits relative
+          to <InlineCode>Application.onCreate()</InlineCode> helps when
+          you&apos;re debugging weird initialization-order bugs.
+        </LI>
+        <LI>
+          <strong>Manifest merging is an extensibility point.</strong>{" "}
           Multiple libraries contributing entries to one shared{" "}
-          <InlineCode>&lt;provider&gt;</InlineCode> node is how the Startup
-          library scales without coordination.
+          <InlineCode>&lt;provider&gt;</InlineCode> node is how Startup
+          scales without each library needing to know about the others.
         </LI>
         <LI>
           <strong>
-            ContentProviders run before <InlineCode>Application.onCreate()</InlineCode>.
+            The pattern is a Service Provider Interface in disguise.
           </strong>{" "}
-          That is what makes them the universal Android trick for &quot;run
-          code at app launch.&quot; Knowing this lifecycle ordering helps
-          when you are debugging mysterious initialization issues.
-        </LI>
-        <LI>
-          <strong>The pattern is essentially a Service Provider Interface.</strong>{" "}
           If you have used Java&apos;s <InlineCode>ServiceLoader</InlineCode>{" "}
           or Dagger&apos;s multibindings, this should feel familiar — it is
           the same idea, expressed through Android manifest metadata instead
@@ -349,8 +362,8 @@ export default function AndroidStartup() {
         </LI>
         <LI>
           <strong>You can opt out.</strong> Setting{" "}
-          <InlineCode>tools:node=&quot;remove&quot;</InlineCode> on a specific{" "}
-          <InlineCode>&lt;meta-data&gt;</InlineCode> excludes that
+          <InlineCode>tools:node=&quot;remove&quot;</InlineCode> on a
+          specific <InlineCode>&lt;meta-data&gt;</InlineCode> excludes that
           initializer from your build. Useful when you want explicit control
           over a library&apos;s startup behavior.
         </LI>
@@ -358,11 +371,11 @@ export default function AndroidStartup() {
 
       <P>
         The next time you read about a Jetpack library &quot;automatically
-        configuring itself,&quot; you now know exactly what that means: a
-        merged manifest entry, a shared ContentProvider, and a reflective
-        call to <InlineCode>create(context)</InlineCode>. No magic — just a
-        good design choice that quietly removed hundreds of milliseconds
-        from millions of cold starts.
+        configuring itself,&quot; you now know exactly what is happening: a
+        merged manifest entry, a shared <InlineCode>ContentProvider</InlineCode>
+        , and a reflective call to <InlineCode>create(context)</InlineCode>.
+        No magic — just a good design choice that quietly removed hundreds
+        of milliseconds from millions of cold starts.
       </P>
     </>
   );

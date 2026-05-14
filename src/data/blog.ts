@@ -3,13 +3,13 @@ import { BlogPost } from "@/types";
 export const blogPosts: BlogPost[] = [
   {
     slug: "android-startup-mechanism",
-    title: "How Android App Initialization Actually Works",
+    title: "Before Application.onCreate(): How Android Libraries Run Code at Startup",
     subtitle:
-      "A deep dive into androidx.startup, InitializationProvider, and the magic behind library auto-init",
+      "From the ContentProvider lifecycle hack to androidx.startup — a deep dive into the mechanism that powers Jetpack auto-init",
     excerpt:
-      "Have you ever wondered how WorkManager, EmojiCompat, and ProcessLifecycle all initialize themselves before your Application.onCreate() even runs — without you writing a single line of init code? This article traces the entire mechanism, from manifest merging to ContentProvider discovery, and explains why the Jetpack Startup library exists.",
+      "ContentProviders have a quiet property most developers never use directly: Android instantiates them before Application.onCreate() runs. Library authors discovered this hook years ago and abused it to the point that cold starts paid the price. This article traces the lifecycle property that started it all, the bloat it caused, and how Jetpack's Startup library refactored the entire ecosystem — using WorkManager as the worked example.",
     date: "2026-05-06",
-    tags: ["Android", "Jetpack", "WorkManager", "Architecture"],
-    readingTime: "8 min read",
+    tags: ["Android", "Jetpack", "Architecture", "ContentProvider"],
+    readingTime: "9 min read",
   },
 ];
