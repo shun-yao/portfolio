@@ -254,4 +254,41 @@ export const projects: Project[] = [
     duration: "2025",
     category: "tools",
   },
+  {
+    slug: "ebike-companion-app",
+    title: "E-Bike Companion App",
+    subtitle: "BLE-connected cycling companion with real-time sensor data",
+    description:
+      "A freelance Android application built with Jetpack Compose and Kotlin Flow that connects to bike BLE devices, receives real-time sensor data, and syncs with backend API.",
+    tech: [
+      "Kotlin",
+      "Jetpack Compose",
+      "Kotlin Flow",
+      "BLE",
+      "REST API",
+    ],
+    highlights: [
+      "Built with Jetpack Compose for modern declarative UI",
+      "Kotlin Flow for reactive real-time sensor data streaming",
+      "BLE integration for connecting to bike devices and receiving sensor data",
+      "Backend API synchronization for data persistence and analysis",
+    ],
+    challenges: [
+      {
+        problem:
+          "BLE connections were unstable with frequent disconnections during rides",
+        solution:
+          "Implemented reconnection logic with exponential backoff and connection state management via Kotlin Flow",
+      },
+      {
+        problem:
+          "Real-time sensor data needed to be displayed smoothly while syncing with backend",
+        solution:
+          "Used Kotlin Flow to buffer and emit sensor data for UI updates while batching API sync calls",
+      },
+    ],
+    role: "Android Developer (Freelance)",
+    duration: "2025",
+    category: "mobile",
+  },
 ];
