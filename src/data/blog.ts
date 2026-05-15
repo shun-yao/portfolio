@@ -2,6 +2,17 @@ import { BlogPost } from "@/types";
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "hilt-injection-reference",
+    title: "Hilt Injection Reference: When to Use Which Annotation",
+    subtitle:
+      "A practical reference for Hilt's core injection annotations — @Inject, @AndroidEntryPoint, @EntryPoint, and @AssistedInject — for the moments when you're not sure which one fits your situation.",
+    excerpt:
+      "Hilt exposes its dependency graph through four core annotations, each fitting a specific situation. This is a quick lookup for when you've forgotten which one applies — pull it up when you're not sure whether you need @EntryPoint or @AssistedInject, or when you want to recall what @AndroidEntryPoint actually does under the hood. Assumes basic DI knowledge.",
+    date: "2026-05-15",
+    tags: ["Android", "Hilt", "Dagger", "Dependency Injection"],
+    readingTime: "5 min read",
+  },
+  {
     slug: "android-startup-mechanism",
     title: "Before Application.onCreate(): How Android Libraries Run Code at Startup",
     subtitle:
